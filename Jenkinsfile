@@ -1,21 +1,28 @@
 pipeline {
   agent { docker { image 'python:3.11-slim'; args '-u root' } }
-
   options { timestamps(); ansiColor('xterm') }
 
   stages {
     stage('Checkout') {
-      steps {
-        // use the Pipeline job's SCM config (no hardcoded URL here)
-        checkout scm
-      }
+      steps { checkout scm }
     }
+
     stage('Install') {
       steps {
-        sh 'python -V'
-        sh 'pip install -r requirements.txt'
+        sh '''
+          set -e
+          python -V
+          # ensure curl exists for Webex notifications later
+          apt-get update -y
+          apt-get install -y --no-install-recommends curl ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+          # install deps with minimal overhead (avoid pip progress threads)
+          pip install --no-cache-dir --progress-bar off -r requirements.txt
+        '''
       }
     }
+
     stage('Test') {
       steps {
         sh 'pytest -q --junitxml=report.xml'
@@ -40,12 +47,14 @@ def sendWebex(String text) {
     string(credentialsId: 'webex-bot-token', variable: 'WEBEX_TOKEN'),
     string(credentialsId: 'webex-room-id',  variable: 'WEBEX_ROOM')
   ]) {
-    sh """
-      curl -s -X POST 'https://webexapis.com/v1/messages' \
-        -H 'Authorization: Bearer ${WEBEX_TOKEN}' \
-        -H 'Content-Type: application/json' \
-        -d '{"roomId": "'${WEBEX_ROOM}'", "markdown": "'${text.replace("\"","\\\"")}'"}'
-    """
+    // avoid Groovy interpolation of secrets: use shell vars ($WEBEX_TOKEN / $WEBEX_ROOM)
+    sh '''
+      set -e
+      TEXT="$1"
+      curl -s -X POST "https://webexapis.com/v1/messages" \
+        -H "Authorization: Bearer $WEBEX_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"roomId\":\"$WEBEX_ROOM\",\"markdown\":\"$TEXT\"}" >/dev/null
+    ''' , arguments: [text]
   }
 }
-

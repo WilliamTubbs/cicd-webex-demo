@@ -20,7 +20,7 @@ pipeline {
     stage('Checkout') {
       steps {
         checkout([$class: 'GitSCM',
-          userRemoteConfigs: [[url: 'https://github.com/REPLACE_ME_USERNAME/cicd-webex-demo.git']],
+          userRemoteConfigs: [[url: 'https://github.com/WilliamTubbs/ci-cd-webex-demo']],
           branches: [[name: '*/main']]
         ])
       }

@@ -12,14 +12,7 @@ pipeline {
         sh '''
           set -e
           python -V
-
-          # Work around apt post-invoke hook issue in slim images
-          rm -f /etc/apt/apt.conf.d/docker-clean || true
-          apt-get update -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= -y
-          apt-get install -y --no-install-recommends curl ca-certificates
-          rm -rf /var/lib/apt/lists/*
-
-          # Quieter pip to avoid thread issues on small VMs
+          # install deps (quietly to avoid thread issues)
           pip install --no-cache-dir --progress-bar off -r requirements.txt
         '''
       }
@@ -49,14 +42,24 @@ def sendWebex(String msg) {
     string(credentialsId: 'webex-bot-token', variable: 'WEBEX_TOKEN'),
     string(credentialsId: 'webex-room-id',  variable: 'WEBEX_ROOM')
   ]) {
-    // pass message via env; avoid Groovy interpolation of secrets
+    // Use Python's stdlib to POST JSON (no curl, no extra packages)
+    // Run on the controller node; no Docker/apt needed.
     withEnv(["WEBEX_TEXT=${msg.replace('\"','\\\\\"')}"]) {
       sh '''
-        set -e
-        curl -s -X POST "https://webexapis.com/v1/messages" \
-          -H "Authorization: Bearer $WEBEX_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "{\"roomId\":\"$WEBEX_ROOM\",\"markdown\":\"$WEBEX_TEXT\"}" >/dev/null
+        python - <<'PY'
+import os, json, urllib.request
+token = os.environ['WEBEX_TOKEN']
+room  = os.environ['WEBEX_ROOM']
+text  = os.environ['WEBEX_TEXT']
+data  = json.dumps({"roomId": room, "markdown": text}).encode()
+req   = urllib.request.Request(
+  "https://webexapis.com/v1/messages",
+  data=data,
+  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+)
+with urllib.request.urlopen(req) as r:
+    print("Webex status:", r.status)
+PY
       '''
     }
   }

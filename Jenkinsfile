@@ -12,12 +12,14 @@ pipeline {
         sh '''
           set -e
           python -V
-          # ensure curl exists for Webex notifications later
-          apt-get update -y
+
+          # Work around apt post-invoke hook issue in slim images
+          rm -f /etc/apt/apt.conf.d/docker-clean || true
+          apt-get update -o APT::Update::Post-Invoke-Success::= -o APT::Update::Post-Invoke::= -y
           apt-get install -y --no-install-recommends curl ca-certificates
           rm -rf /var/lib/apt/lists/*
 
-          # install deps with minimal overhead (avoid pip progress threads)
+          # Quieter pip to avoid thread issues on small VMs
           pip install --no-cache-dir --progress-bar off -r requirements.txt
         '''
       }
@@ -42,19 +44,20 @@ pipeline {
   }
 }
 
-def sendWebex(String text) {
+def sendWebex(String msg) {
   withCredentials([
     string(credentialsId: 'webex-bot-token', variable: 'WEBEX_TOKEN'),
     string(credentialsId: 'webex-room-id',  variable: 'WEBEX_ROOM')
   ]) {
-    // avoid Groovy interpolation of secrets: use shell vars ($WEBEX_TOKEN / $WEBEX_ROOM)
-    sh '''
-      set -e
-      TEXT="$1"
-      curl -s -X POST "https://webexapis.com/v1/messages" \
-        -H "Authorization: Bearer $WEBEX_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"roomId\":\"$WEBEX_ROOM\",\"markdown\":\"$TEXT\"}" >/dev/null
-    ''' , arguments: [text]
+    // pass message via env; avoid Groovy interpolation of secrets
+    withEnv(["WEBEX_TEXT=${msg.replace('\"','\\\\\"')}"]) {
+      sh '''
+        set -e
+        curl -s -X POST "https://webexapis.com/v1/messages" \
+          -H "Authorization: Bearer $WEBEX_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"roomId\":\"$WEBEX_ROOM\",\"markdown\":\"$WEBEX_TEXT\"}" >/dev/null
+      '''
+    }
   }
 }

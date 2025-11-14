@@ -10,17 +10,32 @@ pipeline {
     stage('Install') {
       steps {
         sh '''
-          set -e
-          python -V
-          # install deps (quietly to avoid thread issues)
-          pip install --no-cache-dir --progress-bar off -r requirements.txt
-        '''
+set -e
+python -V
+# install deps (quietly to avoid thread issues)
+pip install --no-cache-dir --progress-bar off -r requirements.txt
+'''
       }
     }
 
     stage('Test') {
       steps {
-        sh 'pytest -q --junitxml=report.xml'
+        sh '''
+set -e
+export PYTHONPATH="$PWD"
+
+# quick sanity import (make sure app_demo is importable)
+python - <<'PY'
+import sys, os
+print("PYTHONPATH=", os.environ.get("PYTHONPATH"))
+print("CWD=", os.getcwd())
+print("sys.path[0]=", sys.path[0])
+import app_demo
+print("Imported app_demo OK")
+PY
+
+pytest -q --junitxml=report.xml
+'''
       }
       post {
         always {
@@ -42,11 +57,9 @@ def sendWebex(String msg) {
     string(credentialsId: 'webex-bot-token', variable: 'WEBEX_TOKEN'),
     string(credentialsId: 'webex-room-id',  variable: 'WEBEX_ROOM')
   ]) {
-    // Use Python's stdlib to POST JSON (no curl, no extra packages)
-    // Run on the controller node; no Docker/apt needed.
     withEnv(["WEBEX_TEXT=${msg.replace('\"','\\\\\"')}"]) {
       sh '''
-        python - <<'PY'
+python - <<'PY'
 import os, json, urllib.request
 token = os.environ['WEBEX_TOKEN']
 room  = os.environ['WEBEX_ROOM']
@@ -60,7 +73,7 @@ req   = urllib.request.Request(
 with urllib.request.urlopen(req) as r:
     print("Webex status:", r.status)
 PY
-      '''
+'''
     }
   }
 }
